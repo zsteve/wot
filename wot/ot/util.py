@@ -255,6 +255,20 @@ def compute_pca(m1, m2, n_components):
     return pca_1, pca_2, pca, mean_shift
 
 
+def compute_pca_list(l, n_components): 
+    matrices = [i if not scipy.sparse.isspmatrix(i) else i.toarray() for i in l]
+    x = np.vstack(matrices)
+    mean_shift = x.mean(axis=0)
+    x = x - mean_shift
+    n_components = min(n_components, x.shape[0])  # n_components must be <= ncells
+    pca = sklearn.decomposition.PCA(n_components=n_components, random_state=58951)
+    pca.fit(x.T)
+    comp = pca.components_.T
+
+    l_len = np.cumsum([0, ] + [i.shape[0] for i in l])
+    pca_list = comp[l_len[i]:l_len[i+1] for i in range(0, len(l))]
+    return pca_list pca, mean_shift
+
 def get_pca(dim, *args):
     """
     Get a PCA projector for the arguments.

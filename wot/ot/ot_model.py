@@ -229,9 +229,11 @@ class OTModel:
             logger.info('Computing transport map from {} {} to {} {}'.format(t0, covariate[0], t1, covariate[1]))
         config = {**self.ot_config, **local_config, 't0': t0, 't1': t1, 'covariate': covariate}
         return self.compute_single_transport_map(config)
+       
 
     @staticmethod
-    def compute_default_cost_matrix(a, b, eigenvals=None):
+    def compute_default_cost_matrix(a, b, eigenvals=None, const_scale_factor = None):
+        # if const_scale_factor == None, then scale median to 1
 
         if eigenvals is not None:
             a = a.dot(eigenvals)
@@ -240,7 +242,11 @@ class OTModel:
         cost_matrix = sklearn.metrics.pairwise.pairwise_distances(a.toarray() if scipy.sparse.isspmatrix(a) else a,
                                                                   b.toarray() if scipy.sparse.isspmatrix(b) else b,
                                                                   metric='sqeuclidean', n_jobs=-1)
-        cost_matrix = cost_matrix / np.median(cost_matrix)
+        if const_scale_factor is not None:
+            cost_matrix = cost_matrix / const_scale_factor
+        else:
+            cost_matrix = cost_matrix / np.median(cost_matrix)
+
         return cost_matrix
 
     def compute_single_transport_map(self, config):
