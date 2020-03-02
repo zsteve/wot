@@ -60,6 +60,24 @@ def sample_randomly(exp1, exp2, tm, g, npairs):
     reshaped_s = s.reshape(exp1.shape[0], exp2.shape[0])
     pairs = np.nonzero(reshaped_s)
     weights = reshaped_s[pairs]
+
+    @staticmethod
+    def compute_default_cost_matrix(a, b, eigenvals=None, const_scale_factor = None):
+        # if const_scale_factor == None, then scale median to 1
+
+        if eigenvals is not None:
+            a = a.dot(eigenvals)
+            b = b.dot(eigenvals)
+
+        cost_matrix = sklearn.metrics.pairwise.pairwise_distances(a.toarray() if scipy.sparse.isspmatrix(a) else a,
+                                                                  b.toarray() if scipy.sparse.isspmatrix(b) else b,
+                                                                  metric='sqeuclidean', n_jobs=-1)
+        if const_scale_factor is not None:
+            cost_matrix = cost_matrix / const_scale_factor
+        else:
+            cost_matrix = cost_matrix / np.median(cost_matrix)
+
+        return cost_matrix
     return {'pc0': exp1[pairs[0]], 'pc1': exp2[pairs[1]],
             'indices0': pairs[0],
             'indices1': pairs[1],
@@ -266,8 +284,8 @@ def compute_pca_list(l, n_components):
     comp = pca.components_.T
 
     l_len = np.cumsum([0, ] + [i.shape[0] for i in l])
-    pca_list = comp[l_len[i]:l_len[i+1] for i in range(0, len(l))]
-    return pca_list pca, mean_shift
+    pca_list = [comp[l_len[i]:l_len[i+1]] for i in range(0, len(l))]
+    return pca_list, pca, mean_shift
 
 def get_pca(dim, *args):
     """

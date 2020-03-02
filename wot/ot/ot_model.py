@@ -207,7 +207,7 @@ class OTModel:
         covariate : None or (str, str)
             The covariate restriction on cells from t0 and t1. None to skip
 
-        Returns
+        RETURNs
         -------
         anndata.AnnData
             The transport map from t0 to t1
@@ -248,6 +248,36 @@ class OTModel:
             cost_matrix = cost_matrix / np.median(cost_matrix)
 
         return cost_matrix
+
+    def compute_transport_map2(self, t0, t1, comp, eigenvals, day_value, p, const_scale_factor = 500): 
+        """
+        Same as compute_transport_map, except this returns tmap, C, learned_growth. 
+        Need to also specify (comp, eigenvals, day_value, p) from PCA output. 
+        """
+        import gc
+        gc.collect()
+        C = self.compute_default_cost_matrix(comp[day_value == t0], comp[day_value == t1], eigenvals, const_scale_factor = const_scale_factor)
+        delta_days = t1 - t0
+        
+        config = self.ot_config
+        config.update({"t0": t0, "t1": t1, "C": C})
+       
+        p0 = p[p.obs.day == t0, :]
+        if self.cell_growth_rate_field in p0.obs.columns:
+                    config['G'] = np.power(p0.obs[self.cell_growth_rate_field].values, delta_days)
+        else:
+                    config['G'] = np.ones(C.shape[0])
+            
+        tmap, learned_growth = wot.ot.compute_transport_matrix(solver=self.solver, **config)
+        learned_growth.append(tmap.sum(axis=1))
+        
+        obs_growth = {}
+        for i in range(len(learned_growth)):
+            g = learned_growth[i]
+            g = np.power(g, 1.0 / delta_days)
+            obs_growth['g' + str(i)] = g
+        
+        return tmap, C, learned_growth
 
     def compute_single_transport_map(self, config):
         """
@@ -316,3 +346,61 @@ class OTModel:
             obs_growth['g' + str(i)] = g
         obs = pd.DataFrame(index=p0.obs.index, data=obs_growth)
         return anndata.AnnData(tmap, obs, pd.DataFrame(index=p1.obs.index))
+
+    def pca_transform_common(self, t_range, pca_dim = None):
+        ds = self.matrix
+        days = np.logical_and(ds.obs[self.day_field] >= t_range[0], 
+                              ds.obs[self.day_field] <= t_range[1])
+        assert sum(days == True) > 0, 't_range invalid'
+        p = ds[days, :]
+        x = p.X.toarray()
+        mean_shift = x.mean(axis = 0)
+        x = x - mean_shift
+        n_components = self.ot_config['local_pca'] if pca_dim == None else pca_dim
+        pca = sklearn.decomposition.PCA(n_components=n_components, random_state=58951)
+        pca.fit(x.T) 
+        
+        day_value = ds.obs[self.day_field][days]
+        
+        comp = pca.components_.T
+        eigenvals = np.diag(pca.singular_values_)
+        
+        return comp, eigenvals, day_value, p, pca
+
+
+    def sample_interp(self, tmap, t0, t1, n_interp, size):
+        """
+        Compute sample displacement interpolation of n_interp distributions each with size size[i] 
+        evenly spaced between t0 and t1, given a precomputed tmap.
+        """ 
+        g = tmap.sum(axis = 1) 
+        ds = self.matrix
+        day = ds.obs[self.day_field]
+        interp_times = np.linspace(t0, t1, n_interp) 
+        interp_dists = []
+        
+        p0 = ds[day == t0, :]
+        p1 = ds[day == t1, :] 
+        p0 = p0.X
+        p1 = p1.X
+        p0 = p0.toarray() if scipy.sparse.isspmatrix(p0) else p0
+        p1 = p1.toarray() if scipy.sparse.isspmatrix(p1) else p1
+        
+        I = p0.shape[0]
+        J = p1.shape[0]
+        for i in range(0, len(interp_times)):
+            s = interp_times[i]
+            interp_frac = (s - t0)/(t1-t0) 
+            tmap_interp = np.matmul(np.diag(np.power(g, interp_frac - 1)), tmap)
+             
+            p_interp = tmap_interp/tmap_interp.sum()
+            p_interp = p_interp.flatten(order = 'C')
+            p_interp = p_interp/p_interp.sum()
+            
+            choices = np.random.choice(I*J, p=p_interp, size=size[i])
+            ps = np.asarray([p0[i // J] * (1-interp_frac) + p1[i % J] * (interp_frac) for i in choices], dtype=np.float64)
+            
+            interp_dists.append(ps)
+        
+        return interp_dists
+
