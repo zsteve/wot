@@ -279,6 +279,48 @@ class OTModel:
         
         return tmap, C, learned_growth
 
+    def compute_transport_map_custom_cost(self, t0, t1, C): 
+        """
+        Compute transport map with custom cost (e.g. diffusion embedding distance).
+        Code mostly copied from compute_single_transport_map
+        """
+        import gc
+        gc.collect()
+
+        if t0 is None or t1 is None:
+            raise ValueError("config must have both t0 and t1, indicating target timepoints")
+        ds = self.matrix
+        p0_indices = ds.obs[self.day_field] == float(t0)
+        p1_indices = ds.obs[self.day_field] == float(t1)
+
+        p0 = ds[p0_indices, :]
+        p1 = ds[p1_indices, :]
+
+        if p0.shape[0] == 0:
+            logger.info('No cells at {}'.format(t0))
+            return None
+        if p1.shape[0] == 0:
+            logger.info('No cells at {}'.format(t1))
+            return None
+
+        config = {**self.ot_config, 't0': t0, 't1': t1}
+        config['C'] = C
+        delta_days = t1 - t0
+
+        if self.cell_growth_rate_field in p0.obs.columns:
+            config['G'] = np.power(p0.obs[self.cell_growth_rate_field].values, delta_days)
+        else:
+            config['G'] = np.ones(C.shape[0])
+        tmap, learned_growth = wot.ot.compute_transport_matrix(solver=self.solver, **config)
+        learned_growth.append(tmap.sum(axis=1))
+        obs_growth = {}
+        for i in range(len(learned_growth)):
+            g = learned_growth[i]
+            g = np.power(g, 1.0 / delta_days)
+            obs_growth['g' + str(i)] = g
+        obs = pd.DataFrame(index=p0.obs.index, data=obs_growth)
+        return anndata.AnnData(tmap, obs, pd.DataFrame(index=p1.obs.index))
+
     def compute_single_transport_map(self, config):
         """
         Computes a single transport map.
